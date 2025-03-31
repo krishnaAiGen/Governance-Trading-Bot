@@ -1,0 +1,1 @@
+[2025-03-31 21:53:20] [Errno 2] No such file or directory: '/Users/krishnayadav/Documents/proposal_trading_bot/data'
