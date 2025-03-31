@@ -20,76 +20,89 @@ if current_dir not in sys.path:
 
 from utils import get_config
 
-class ProposalScanner:
+class DataProvider:
     """
-    A class for scanning, downloading, and processing governance proposals.
+    Base class for data providers that supply proposal data.
+    
+    Implement this class to support different data sources.
     """
     
-    def __init__(self, config_path='config.json'):
+    def connect(self):
+        """Connect to the data source. Return connection object."""
+        raise NotImplementedError("Subclasses must implement connect()")
+    
+    def disconnect(self, connection):
+        """Disconnect from the data source."""
+        raise NotImplementedError("Subclasses must implement disconnect()")
+    
+    def download_proposals(self, connection, scan_mode=True):
         """
-        Initialize the ProposalScanner with configuration.
+        Download proposals from the data source.
         
         Args:
-            config_path (str): Path to the configuration file (not used if using env vars)
-        """
-        # Load configuration from environment variables
-        self.config = get_config().config
-    
-    def create_firebase_client(self):
-        """
-        Create and initialize a Firebase client.
-        
+            connection: Connection object from connect()
+            scan_mode: If True, limit to recent proposals, otherwise get more
+            
         Returns:
-            tuple: A tuple containing (db, app) - Firestore client and Firebase app instance
+            dict: Dictionary of proposal data
         """
+        raise NotImplementedError("Subclasses must implement download_proposals()")
+    
+    def check_new_proposals(self, proposals_dict, existing_data_path):
+        """
+        Check for new proposals not in existing data.
+        
+        Args:
+            proposals_dict: Dictionary of proposal data
+            existing_data_path: Path to file with existing data
+            
+        Returns:
+            DataFrame: DataFrame of new proposals
+        """
+        raise NotImplementedError("Subclasses must implement check_new_proposals()")
+
+class FirebaseDataProvider(DataProvider):
+    """
+    Firebase implementation of DataProvider for proposal data.
+    """
+    
+    def __init__(self, config):
+        self.config = config
+    
+    def connect(self):
+        """Connect to Firebase and return the database client and app."""
         cred = credentials.Certificate(self.config["firebase_cred"])
         app = firebase_admin.initialize_app(cred)
-        
         db = firestore.client()
-        
-        return db, app  # Return both the Firestore client and app instance
+        return (db, app)
     
-    def clean_content(self, html_text):
-        """
-        Clean HTML content by extracting only the text.
-        
-        Args:
-            html_text (str): HTML text to clean
-            
-        Returns:
-            str: Cleaned text content
-        """
-        # Parse the HTML content using BeautifulSoup
+    def disconnect(self, connection):
+        """Disconnect from Firebase."""
+        _, app = connection
+        try:
+            firebase_admin.delete_app(app)
+            print("Firebase client closed successfully.")
+        except Exception as e:
+            print(f"Error closing Firebase client: {e}")
+    
+    def _clean_content(self, html_text):
+        """Clean HTML content by extracting only the text."""
         soup = BeautifulSoup(html_text, 'html.parser')
-        
-        # Get the clean text by extracting only the text part
-        clean_text = soup.get_text()
-        
-        return clean_text
+        return soup.get_text()
     
-    def download_and_save_proposal(self, db, scan):
-        """
-        Download and save proposals from Firebase.
-        
-        Args:
-            db: Firestore database client
-            scan (bool): If True, limit to 20 most recent proposals, otherwise get 1000
-            
-        Returns:
-            dict: Dictionary containing proposal data by protocol
-        """
-        print("#########Downloading intial proposals###########")
+    def download_proposals(self, connection, scan_mode=True):
+        """Download proposals from Firebase."""
+        db, _ = connection
+        print("#########Downloading proposals from Firebase###########")
         retry_strategy = Retry()
         collection_name = 'ai_posts'
         collection_ref = db.collection(collection_name)    
         
-        if scan:
+        if scan_mode:
             docs = collection_ref.order_by('created_at', direction='DESCENDING').limit(20).stream(retry=retry_strategy)
         else:
-            # docs = collection_ref.stream(retry=retry_strategy)
             docs = collection_ref.order_by('created_at', direction='DESCENDING').limit(1000).stream(retry=retry_strategy)
 
-        
         protocol_list = []
         docs_list = []
         for doc in docs:
@@ -111,7 +124,7 @@ class ProposalScanner:
                             protocol = key
                             timestamp = doc['created_at']
                             title = doc['title']
-                            description = self.clean_content(doc['description'])
+                            description = self._clean_content(doc['description'])
                             
                             try:
                                 discussion_link = doc['post_url_link']
@@ -122,8 +135,7 @@ class ProposalScanner:
                             
                             temp_df = pd.DataFrame([df_row], columns=discourse_df.columns)
                             
-                            with SuppressLogging():
-                                discourse_df = pd.concat([discourse_df, temp_df], ignore_index=True)
+                            discourse_df = pd.concat([discourse_df, temp_df], ignore_index=True)
                 
                 except Exception as e:
                     continue
@@ -131,6 +143,95 @@ class ProposalScanner:
             proposal_dict[key] = discourse_df
         
         return proposal_dict
+    
+    def check_new_proposals(self, proposals_dict, existing_data_path):
+        """Check for new proposals not in existing data."""
+        proposal_post_id = list(pd.read_csv(existing_data_path, index_col=0)['post_id'])
+        
+        columns = ["post_id", "coin", "description", "discussion_link", "timestamp"]
+        new_row_df = pd.DataFrame(columns=columns)
+        
+        for key, coin_df in proposals_dict.items():
+            for index, row in coin_df.iterrows():
+                post_id = row['post_id']
+                if post_id not in proposal_post_id:
+                    coin = post_id.split("--")[0]
+                    description = row['description']
+                    discussion_link = row['discussion_link']
+                    timestamp = row['timestamp']
+                    
+                    new_row = {
+                        "post_id": post_id,
+                        "coin": coin,
+                        "description": description,
+                        "discussion_link": discussion_link,
+                        "timestamp": timestamp
+                    }
+                    new_row_df = pd.concat([new_row_df, pd.DataFrame([new_row])], ignore_index=True)
+                        
+        return new_row_df
+
+# Factory to create appropriate data provider
+def create_data_provider(provider_type, config):
+    """
+    Create a data provider of the specified type.
+    
+    Args:
+        provider_type (str): Type of provider ('firebase', etc.)
+        config (dict): Configuration dictionary
+        
+    Returns:
+        DataProvider: Provider instance
+    """
+    if provider_type.lower() == 'firebase':
+        return FirebaseDataProvider(config)
+    else:
+        raise ValueError(f"Unsupported provider type: {provider_type}")
+
+class ProposalScanner:
+    """
+    A class for scanning, downloading, and processing governance proposals.
+    """
+    
+    def __init__(self, config_path='config.json'):
+        """
+        Initialize the ProposalScanner with configuration.
+        
+        Args:
+            config_path (str): Path to the configuration file (not used if using env vars)
+        """
+        # Load configuration from environment variables
+        self.config = get_config().config
+        
+        # Create the data provider (default to firebase for backward compatibility)
+        provider_type = self.config.get('data_provider_type', 'firebase')
+        self.data_provider = create_data_provider(provider_type, self.config)
+        
+        # Store the connection as None initially
+        self.connection = None
+    
+    def create_firebase_client(self):
+        """
+        Create and initialize a Firebase client.
+        
+        Returns:
+            tuple: A tuple containing (db, app) - Firestore client and Firebase app instance
+        """
+        self.connection = self.data_provider.connect()
+        return self.connection
+    
+    def download_and_save_proposal(self, connection, scan):
+        """
+        Download and save proposals from the data source.
+        
+        Args:
+            connection: Connection object
+            scan (bool): If True, limit to recent proposals, otherwise get more
+            
+        Returns:
+            dict: Dictionary containing proposal data by protocol
+        """
+        return self.data_provider.download_proposals(connection, scan)
     
     def check_new_post(self, proposal_dict):
         """
@@ -142,43 +243,20 @@ class ProposalScanner:
         Returns:
             DataFrame: DataFrame containing new proposals
         """
-        proposal_post_id = list(pd.read_csv(self.config["data_dir"] + '/proposal_post_id.csv', index_col=0)['post_id'])
-        
-        columns = ["post_id", "coin", "description", "discussion_link", "timestamp"]
-        new_row_df = pd.DataFrame(columns = columns)
-        
-        for key, coin_df in proposal_dict.items():
-            for index, row in coin_df.iterrows():
-                post_id = row['post_id']
-                if post_id not in proposal_post_id:
-                    coin = post_id.split("--")[0]
-                    description = row['description']
-                    discussion_link = row['discussion_link']
-                    timestamp = row['timestamp']
-                    
-                    new_row = {
-                        "post_id" : post_id,
-                        "coin" : coin,
-                        "description": description,
-                        "discussion_link": discussion_link,
-                        "timestamp": timestamp
-                        }
-                    with SuppressLogging():
-                        new_row_df = pd.concat([new_row_df, pd.DataFrame([new_row])], ignore_index=True)
-                        
-        return new_row_df
+        existing_data_path = os.path.join(self.config["data_dir"], 'proposal_post_id.csv')
+        return self.data_provider.check_new_proposals(proposal_dict, existing_data_path)
     
-    def store_data(self, db):
+    def store_data(self, connection):
         """
         Store initial data into database.
         
         Args:
-            db: Firestore database client
+            connection: Connection object
             
         Returns:
             str: Timestamp when the data was stored
         """
-        proposal_dict = self.download_and_save_proposal(db, False)
+        proposal_dict = self.download_and_save_proposal(connection, False)
         return self.store_into_db(proposal_dict)
     
     def store_into_db(self, proposal_dict):
@@ -200,9 +278,9 @@ class ProposalScanner:
                 if key not in key_list:
                     key_list.append(key)
         
-        proposal_csv['post_id'] =  key_list
+        proposal_csv['post_id'] = key_list
         
-        proposal_csv.to_csv(self.config["data_dir"] + '/proposal_post_id.csv')
+        proposal_csv.to_csv(os.path.join(self.config["data_dir"], 'proposal_post_id.csv'))
         
         start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
@@ -215,13 +293,13 @@ class ProposalScanner:
         Args:
             app: Firebase app instance to close
         """
-        import firebase_admin
-        
-        try:
-            firebase_admin.delete_app(app)
-            print("Firebase client closed successfully.")
-        except Exception as e:
-            print(f"Error closing Firebase client: {e}")
+        if self.connection:
+            self.data_provider.disconnect(self.connection)
+            self.connection = None
+        else:
+            # Create a temporary connection just to disconnect (for API compatibility)
+            connection = self.data_provider.connect()
+            self.data_provider.disconnect(connection)
 
 
 # Standalone functions for backward compatibility
