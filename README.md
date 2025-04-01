@@ -60,15 +60,21 @@ If you prefer to set up manually:
 
 ### Environment Variables
 
-Create a `.env` file with your configuration:
+A template `.env.example` file is provided with all the required fields. Copy this file to create your own `.env` file:
+
+```bash
+cp .env.example .env
+```
+
+Then edit the `.env` file with your actual credentials:
 
 ```
 # Paths and directories
 DATA_DIR=./data
 FIREBASE_CRED=/path/to/firebase/credentials.json
-BULLISH_DIR=/path/to/bullish/model/
-BEARISH_DIR=/path/to/bearish/model/
-SENTIMENT_DIR=/path/to/sentiment/model/
+BULLISH_DIR=./trained_model/bullish
+BEARISH_DIR=./trained_model/bearish
+SENTIMENT_DIR=./trained_model/sentiment
 
 # Binance API credentials
 BINANCE_API_KEY=your_binance_api_key
@@ -97,10 +103,67 @@ STOP_LOSS_PERCENT=2
 MAX_TRADES=4
 
 # Data Provider Configuration
-DATA_PROVIDER_TYPE=mongodb
-MONGO_CONNECTION_STRING=mongodb://localhost:27017/
-MONGO_DB_NAME=governance_data
+DATA_PROVIDER_TYPE=firebase
 ```
+
+### Downloading the Trading Model
+
+The bot requires pre-trained models for sentiment analysis and trading decisions. You can obtain these models in two ways:
+
+#### Option 1: Automatic Download (Recommended)
+
+Run the included download script to automatically download and set up the models:
+
+```bash
+# Make sure you're in the virtual environment
+source venv/bin/activate
+
+# Run the download script
+python -m proposal_revamp.download_models
+```
+
+This script will:
+1. Create the necessary model directories
+2. Download the models from Google Drive
+3. Extract them to the correct locations
+4. Verify the installation
+
+#### Option 2: Manual Download
+
+If the automatic download doesn't work, follow these steps:
+
+1. Create a `trained_model` directory in the project root:
+   ```bash
+   mkdir -p trained_model/bullish trained_model/bearish trained_model/sentiment
+   ```
+
+2. Download the model file from Google Drive:
+   [Download Trading Models](https://drive.google.com/file/d/1bT6gt61GtOXnnyVYOsMTZmkAgxosVijM/view?usp=sharing)
+
+3. Extract the downloaded zip file:
+   ```bash
+   unzip trading_model_Dec\ 2.zip -d temp_models/
+   ```
+
+4. Move the extracted models to the appropriate directories:
+   ```bash
+   # Move model files to their respective directories
+   cp -r temp_models/bullish/* trained_model/bullish/
+   cp -r temp_models/bearish/* trained_model/bearish/
+   cp -r temp_models/sentiment/* trained_model/sentiment/
+   
+   # Clean up temporary directory
+   rm -rf temp_models
+   ```
+
+5. Verify the models are correctly installed:
+   ```bash
+   ls -la trained_model/bullish/
+   ls -la trained_model/bearish/
+   ls -la trained_model/sentiment/
+   ```
+
+Make sure the paths in your `.env` file point to these model directories.
 
 ## Running the Bot
 
@@ -352,6 +415,44 @@ If you encounter the error `ModuleNotFoundError: No module named 'proposal_revam
 2. Run the bot from the project root directory
 3. Use the proper command: `python -m proposal_revamp`
 
+## Examples
+
+To help you get started, we've included example scripts in the `proposal_revamp/examples/` directory:
+
+### Data Provider Example
+
+The `data_provider_example.py` script demonstrates how to use the Data Provider abstraction layer to fetch proposals from different data sources:
+
+```bash
+# Activate the virtual environment
+source venv/bin/activate
+
+# Run the example
+python -m proposal_revamp.examples.data_provider_example
+```
+
+This example shows:
+1. How to use the MongoDB provider (default)
+2. How to use the Firebase provider (if configured)
+3. Information about creating custom data providers
+
+## Running Tests
+
+The project includes a test suite to ensure that components work as expected. To run the tests:
+
+```bash
+# Activate the virtual environment
+source venv/bin/activate
+
+# Run all tests
+python -m unittest discover proposal_revamp/tests
+
+# Run a specific test file
+python -m unittest proposal_revamp/tests/test_data_provider_factory.py
+```
+
+Writing tests for your custom data providers is highly recommended to ensure they integrate correctly with the system.
+
 ## License
 
-This project is licensed under the MIT License. 
+This project is licensed under the terms of the MIT license. 

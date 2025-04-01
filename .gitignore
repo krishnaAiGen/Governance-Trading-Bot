@@ -1,3 +1,4 @@
 /data
 .env
 firebase.json
+/trained_model

@@ -4,6 +4,29 @@
 
 The Governance Trading Bot features a modular data provider system that allows you to easily integrate data from different sources. This document explains the architecture and provides detailed instructions for creating custom data providers.
 
+## Model Requirements
+
+Before using data providers, ensure you have the required trained models installed:
+
+1. The bot requires pre-trained models for sentiment analysis and trading decisions
+2. Download the models from [Google Drive](https://drive.google.com/file/d/1bT6gt61GtOXnnyVYOsMTZmkAgxosVijM/view?usp=sharing)
+3. Extract and place them in the `trained_model` directory with the following structure:
+   ```
+   trained_model/
+   ├── bullish/      # Contains models for bullish prediction
+   ├── bearish/      # Contains models for bearish prediction
+   └── sentiment/    # Contains models for sentiment analysis
+   ```
+
+4. Update your `.env` file to point to these directories:
+   ```
+   BULLISH_DIR=./trained_model/bullish
+   BEARISH_DIR=./trained_model/bearish
+   SENTIMENT_DIR=./trained_model/sentiment
+   ```
+
+The data provider system uses these models to analyze proposals and make trading decisions.
+
 ## Architecture
 
 The data provider system consists of:
